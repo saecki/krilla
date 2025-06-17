@@ -29,10 +29,10 @@ impl Annotation {
     ///
     /// Note that the alt text might be required in some cases, for example
     /// when exporting to PDF/UA.
-    pub fn new_link(annotation: LinkAnnotation, alt_text: Option<String>) -> Self {
+    pub fn new_link(annotation: LinkAnnotation, alt: Option<String>) -> Self {
         Self {
             annotation_type: AnnotationType::Link(annotation),
-            alt: alt_text,
+            alt,
             struct_parent: None,
         }
     }
@@ -70,8 +70,8 @@ impl Annotation {
             annotation.struct_parent(struct_parent);
         }
 
-        if let Some(alt_text) = &self.alt {
-            annotation.contents(TextStr(alt_text));
+        if let Some(alt) = &self.alt {
+            annotation.contents(TextStr(alt));
         } else {
             sc.register_validation_error(ValidationError::MissingAnnotationAltText);
         }
