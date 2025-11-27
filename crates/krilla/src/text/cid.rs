@@ -251,6 +251,7 @@ impl CIDFont {
         };
 
         let base_font = base_font_name(&self.font, &self.glyph_remapper);
+        eprintln!("{base_font} {:#?}\n----\n\n\n", &self.glyph_remapper);
         let base_font_type0 = if is_cff {
             format!("{base_font}-{IDENTITY_H}")
         } else {
