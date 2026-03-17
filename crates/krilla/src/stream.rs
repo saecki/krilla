@@ -36,7 +36,7 @@ use crate::content::ContentBuilder;
 use crate::geom::{Rect, Transform};
 use crate::resource::{ResourceDictionary, ResourceDictionaryBuilder};
 use crate::serialize::SerializeContext;
-use crate::surface::Surface;
+use crate::surface::{Surface, SurfaceKind};
 use crate::SerializeSettings;
 
 /// A stream.
@@ -113,7 +113,7 @@ impl<'a> StreamBuilder<'a> {
         Surface::new(
             self.sc,
             ContentBuilder::new(Transform::identity(), true),
-            None,
+            SurfaceKind::Untagged,
             finish_fn,
         )
     }

@@ -6,6 +6,7 @@
 
 use std::num::NonZeroU64;
 
+use crate::annotation::Annotation;
 use crate::color::rgb;
 use crate::content::ContentBuilder;
 use crate::geom::Path;
@@ -27,7 +28,7 @@ use crate::paint::{InnerPaint, Paint};
 use crate::pdf::PdfDocument;
 use crate::serialize::SerializeContext;
 use crate::stream::{Stream, StreamBuilder};
-use crate::tagging::SpanTag;
+use crate::tagging::{AnnotationIdentifier, SpanTag};
 use crate::text::Font;
 use crate::text::{draw_glyph, Glyph};
 #[cfg(feature = "simple-text")]
@@ -72,25 +73,56 @@ pub struct Surface<'a> {
     stroke: Option<Stroke>,
     bd: Builders,
     push_instructions: Vec<PushInstruction>,
-    page_identifier: Option<PageTagIdentifier>,
+    kind: SurfaceKind<'a>,
     finish_fn: Box<dyn FnMut(Stream, i32) + 'a>,
+}
+
+pub(crate) enum SurfaceKind<'a> {
+    Tagged(PageTagIdentifier, &'a mut Vec<Annotation>),
+    Untagged,
+}
+
+impl SurfaceKind<'_> {
+    fn is_tagged(&self) -> bool {
+        matches!(self, Self::Tagged(..))
+    }
 }
 
 impl<'a> Surface<'a> {
     pub(crate) fn new(
         sc: &'a mut SerializeContext,
         root_builder: ContentBuilder,
-        page_identifier: Option<PageTagIdentifier>,
+        kind: SurfaceKind<'a>,
         finish_fn: Box<dyn FnMut(Stream, i32) + 'a>,
     ) -> Surface<'a> {
         Self {
             sc,
             bd: Builders::new(root_builder),
-            page_identifier,
+            kind,
             fill: None,
             stroke: None,
             push_instructions: vec![],
             finish_fn,
+        }
+    }
+
+    /// Add a tagged annotation to the page of the surface.
+    pub fn add_tagged_annotation(&mut self, mut annotation: Annotation) -> Identifier {
+        // TODO: Kind should be Page vs Stream, and tagged vs untagged is orthogonal.
+        // Then adding an annotation to a stream should just panic.
+        match &mut self.kind {
+            SurfaceKind::Tagged(pi, annotations) => {
+                let annot_index = annotations.len();
+                let ai = AnnotationIdentifier::new(pi.page_index, annot_index);
+                let struct_parent = self.sc.register_annotation_parent(ai);
+                annotation.struct_parent = struct_parent;
+                annotations.push(annotation);
+                Identifier::new_annotation(pi.page_index, annot_index)
+            }
+            SurfaceKind::Untagged => {
+                annotations.push(annotation);
+                Identifier::dummy()
+            }
         }
     }
 
@@ -156,35 +188,36 @@ impl<'a> Surface<'a> {
     /// # Panics
     /// Panics if a tagged section has already been started.
     pub fn start_tagged(&mut self, tag: ContentTag) -> Identifier {
-        if let Some(id) = &mut self.page_identifier {
-            match tag {
-                // An artifact is actually not really part of tagged PDF and doesn't have
-                // a marked content identifier, so we need to return a dummy one here. It's just
-                // the API of krilla that conflates artifacts with tagged content,
-                // for the sake of simplicity. But the user of the library does not need to know
-                // about this.
-                ContentTag::Artifact(at) => {
-                    if at.requires_properties() {
-                        self.bd
-                            .get_mut()
-                            .start_marked_content_with_properties(self.sc, None, tag);
-                    } else {
-                        self.bd.get_mut().start_marked_content(tag.name());
-                    }
+        match &mut self.kind {
+            SurfaceKind::Tagged(id, _) => {
+                match tag {
+                    // An artifact is actually not really part of tagged PDF and doesn't have
+                    // a marked content identifier, so we need to return a dummy one here. It's just
+                    // the API of krilla that conflates artifacts with tagged content,
+                    // for the sake of simplicity. But the user of the library does not need to know
+                    // about this.
+                    ContentTag::Artifact(at) => {
+                        if at.requires_properties() {
+                            self.bd
+                                .get_mut()
+                                .start_marked_content_with_properties(self.sc, None, tag);
+                        } else {
+                            self.bd.get_mut().start_marked_content(tag.name());
+                        }
 
-                    Identifier::dummy()
-                }
-                ContentTag::Span(_) | ContentTag::Other => {
-                    self.bd.get_mut().start_marked_content_with_properties(
-                        self.sc,
-                        Some(id.mcid),
-                        tag,
-                    );
-                    id.bump().into()
+                        Identifier::dummy()
+                    }
+                    ContentTag::Span(_) | ContentTag::Other => {
+                        self.bd.get_mut().start_marked_content_with_properties(
+                            self.sc,
+                            Some(id.mcid),
+                            tag,
+                        );
+                        id.bump().into()
+                    }
                 }
             }
-        } else {
-            Identifier::dummy()
+            _ => Identifier::dummy(),
         }
     }
 
@@ -214,7 +247,7 @@ impl<'a> Surface<'a> {
     /// # Panics
     /// Panics if no tagged section has been started.
     pub fn end_tagged(&mut self) {
-        if self.page_identifier.is_some() {
+        if self.kind.is_tagged() {
             self.bd.get_mut().end_marked_content();
         }
     }
@@ -576,9 +609,9 @@ impl Drop for Surface<'_> {
             &mut self.bd.root_builder,
             ContentBuilder::new(Transform::identity(), false),
         );
-        let num_mcids = match self.page_identifier {
-            Some(pi) => pi.mcid,
-            None => 0,
+        let num_mcids = match self.kind {
+            SurfaceKind::Tagged(pi, _) => pi.mcid,
+            SurfaceKind::Untagged => 0,
         };
 
         assert!(self.bd.sub_builders.is_empty());

@@ -17,7 +17,7 @@ use crate::interchange::tagging::{Identifier, PageTagIdentifier};
 use crate::resource::ResourceDictionary;
 use crate::serialize::{PageInfo, SerializeContext};
 use crate::stream::{FilterStreamBuilder, Stream};
-use crate::surface::Surface;
+use crate::surface::{Surface, SurfaceKind};
 use crate::tagging::AnnotationIdentifier;
 use crate::util::Deferred;
 
@@ -246,13 +246,14 @@ impl<'a> Page<'a> {
             self.num_mcids = num_mcids;
         });
 
-        let page_identifier = if self.sc.serialize_settings().enable_tagging {
-            Some(PageTagIdentifier::new(self.page_index, 0))
+        let kind = if self.sc.serialize_settings().enable_tagging {
+            let pi = PageTagIdentifier::new(self.page_index, 0);
+            SurfaceKind::Tagged(pi, &mut self.annotations)
         } else {
-            None
+            SurfaceKind::Untagged
         };
 
-        Surface::new(self.sc, root_builder, page_identifier, finish_fn)
+        Surface::new(self.sc, root_builder, kind, finish_fn)
     }
 
     /// A shorthand for `std::mem::drop`.
